@@ -137,6 +137,96 @@ export const imageAnalysisTool = createTool({
 });
 ```
 
+### 4. Calendar Tool
+
+The Calendar Tool provides various date-related utilities, including date information retrieval, calculations, and holiday data.
+
+**Capabilities:**
+- Retrieving detailed information about dates
+- Calculating days between dates
+- Adding days to dates
+- Checking if dates are weekends or business days
+- Finding the next business day
+- Retrieving holiday information for different countries
+
+**Implementation:**
+```typescript
+export const calendarTool = createTool({
+  id: 'calendar-tool',
+  description: 'Calendar utilities for date calculations, holiday checking, and business day operations',
+  inputSchema: z.object({
+    operation: z.enum([
+      'get-date-info',
+      'calculate-days-between',
+      'add-days',
+      'is-weekend',
+      'is-business-day',
+      'get-next-business-day',
+      'get-holidays',
+    ]).describe('The calendar operation to perform'),
+    date: z.string().describe('Date in YYYY-MM-DD format'),
+    endDate: z.string().optional().describe('End date in YYYY-MM-DD format (for date range operations)'),
+    days: z.number().optional().describe('Number of days to add or subtract'),
+    country: z.string().optional().default('US').describe('Country code for holiday information'),
+    year: z.number().optional().describe('Year for holiday information'),
+  }),
+  outputSchema: z.object({
+    result: z.union([z.string(), z.number(), z.boolean(), z.array(z.any())]),
+    formattedDate: z.string().optional(),
+    dayOfWeek: z.string().optional(),
+    isWeekend: z.boolean().optional(),
+    isBusinessDay: z.boolean().optional(),
+    daysRemaining: z.object({
+      inMonth: z.number().optional(),
+      inYear: z.number().optional(),
+    }).optional(),
+    holidays: z.array(z.object({
+      date: z.string(),
+      name: z.string(),
+      localName: z.string().optional(),
+      countryCode: z.string().optional(),
+    })).optional(),
+  }),
+  execute: async ({ context }) => {
+    return await executeCalendarOperation(context);
+  },
+});
+```
+
+### 5. SMS Tool
+
+The SMS Tool enables sending text messages via Twilio, with support for both plain text and media messages.
+
+**Capabilities:**
+- Sending SMS messages to phone numbers worldwide
+- Supporting various phone number formats with automatic formatting
+- Including media attachments via URLs
+- Providing detailed delivery status information
+- Handling error conditions gracefully
+
+**Implementation:**
+```typescript
+export const smsTool = createTool({
+  id: 'send-sms',
+  description: 'Send SMS messages via Twilio',
+  inputSchema: z.object({
+    to: z.string().describe('Recipient phone number in E.164 format (e.g., +1234567890)'),
+    message: z.string().describe('SMS message content'),
+    mediaUrl: z.string().optional().describe('URL to media to include in the message (optional)'),
+  }),
+  outputSchema: z.object({
+    success: z.boolean(),
+    sid: z.string().optional(),
+    status: z.string().optional(),
+    error: z.string().optional(),
+    timestamp: z.string(),
+  }),
+  execute: async ({ context }) => {
+    return await sendSMS(context.to, context.message, context.mediaUrl);
+  },
+});
+```
+
 ## How to Implement New Tools
 
 Adding a new tool to your Mastra application follows these steps:

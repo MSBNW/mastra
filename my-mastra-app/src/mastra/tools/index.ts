@@ -1,6 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { format, parse, isValid, addDays, isSameDay, differenceInDays, isWeekend, getDay, differenceInCalendarDays } from 'date-fns';
+import twilio from 'twilio';
 
 // Define the response interface for News API
 interface NewsAPIResponse {
@@ -38,6 +40,19 @@ interface WeatherResponse {
     wind_gusts_10m: number;
     weather_code: number;
   };
+}
+
+// Holiday API interface
+interface HolidayApiResponse {
+  date: string;
+  localName: string;
+  name: string;
+  countryCode: string;
+  fixed: boolean;
+  global: boolean;
+  counties: string[] | null;
+  launchYear: number | null;
+  types: string[];
 }
 
 // Weather Tool
@@ -303,6 +318,308 @@ const analyzeImage = async (imageUrl: string, prompt?: string) => {
     throw new Error(`Failed to analyze image: ${error.message}`);
   }
 };
+
+// Calendar Tool
+export const calendarTool = createTool({
+  id: 'calendar-tool',
+  description: 'Calendar utilities for date calculations, holiday checking, and business day operations',
+  inputSchema: z.object({
+    operation: z.enum([
+      'get-date-info',
+      'calculate-days-between',
+      'add-days',
+      'is-weekend',
+      'is-business-day',
+      'get-next-business-day',
+      'get-holidays',
+    ]).describe('The calendar operation to perform'),
+    date: z.string().describe('Date in YYYY-MM-DD format'),
+    endDate: z.string().optional().describe('End date in YYYY-MM-DD format (for date range operations)'),
+    days: z.number().optional().describe('Number of days to add or subtract'),
+    country: z.string().optional().default('US').describe('Country code for holiday information'),
+    year: z.number().optional().describe('Year for holiday information'),
+  }),
+  outputSchema: z.object({
+    result: z.union([z.string(), z.number(), z.boolean(), z.array(z.any())]),
+    formattedDate: z.string().optional(),
+    dayOfWeek: z.string().optional(),
+    isWeekend: z.boolean().optional(),
+    isBusinessDay: z.boolean().optional(),
+    daysRemaining: z.object({
+      inMonth: z.number().optional(),
+      inYear: z.number().optional(),
+    }).optional(),
+    holidays: z.array(z.object({
+      date: z.string(),
+      name: z.string(),
+      localName: z.string().optional(),
+      countryCode: z.string().optional(),
+    })).optional(),
+  }),
+  execute: async ({ context }) => {
+    return await executeCalendarOperation(context);
+  },
+});
+
+// SMS Tool
+export const smsTool = createTool({
+  id: 'send-sms',
+  description: 'Send SMS messages via Twilio',
+  inputSchema: z.object({
+    to: z.string().describe('Recipient phone number in E.164 format (e.g., +1234567890)'),
+    message: z.string().describe('SMS message content'),
+    mediaUrl: z.string().optional().describe('URL to media to include in the message (optional)'),
+  }),
+  outputSchema: z.object({
+    success: z.boolean(),
+    sid: z.string().optional(),
+    status: z.string().optional(),
+    error: z.string().optional(),
+    timestamp: z.string(),
+  }),
+  execute: async ({ context }) => {
+    return await sendSMS(context.to, context.message, context.mediaUrl);
+  },
+});
+
+const sendSMS = async (to: string, message: string, mediaUrl?: string) => {
+  try {
+    // Get Twilio credentials from environment variables
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+    
+    if (!accountSid || !authToken || !fromNumber) {
+      throw new Error('Missing Twilio credentials in environment variables');
+    }
+
+    // Format the recipient number if not already in E.164 format
+    let formattedNumber = to;
+    if (!to.startsWith('+')) {
+      // Remove any non-digit characters
+      const digits = to.replace(/\D/g, '');
+      
+      // For US numbers, ensure they have country code
+      if (digits.length === 10) {
+        formattedNumber = `+1${digits}`;
+      } else {
+        formattedNumber = `+${digits}`;
+      }
+    }
+    
+    // Initialize Twilio client
+    const client = twilio(accountSid, authToken);
+    
+    // Prepare message options
+    const messageOptions: any = {
+      body: message,
+      from: fromNumber,
+      to: formattedNumber,
+    };
+    
+    // Add media URL if provided
+    if (mediaUrl) {
+      messageOptions.mediaUrl = [mediaUrl];
+    }
+    
+    // Send the message
+    const result = await client.messages.create(messageOptions);
+    
+    return {
+      success: true,
+      sid: result.sid,
+      status: result.status,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('SMS sending error:', error);
+    return {
+      success: false,
+      error: error.message || 'Unknown error sending SMS',
+      timestamp: new Date().toISOString(),
+    };
+  }
+};
+
+const executeCalendarOperation = async ({
+  operation,
+  date,
+  endDate,
+  days = 0,
+  country = 'US',
+  year,
+}: {
+  operation: string;
+  date: string;
+  endDate?: string;
+  days?: number;
+  country?: string;
+  year?: number;
+}) => {
+  try {
+    // Parse the input date
+    const parsedDate = parse(date, 'yyyy-MM-dd', new Date());
+    
+    if (!isValid(parsedDate)) {
+      throw new Error(`Invalid date format: ${date}. Please use YYYY-MM-DD format.`);
+    }
+    
+    // For operations that require an end date
+    let parsedEndDate;
+    if (endDate) {
+      parsedEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
+      if (!isValid(parsedEndDate)) {
+        throw new Error(`Invalid end date format: ${endDate}. Please use YYYY-MM-DD format.`);
+      }
+    }
+
+    // Base response object that will be extended based on the operation
+    const baseResponse = {
+      formattedDate: format(parsedDate, 'MMMM d, yyyy'),
+      dayOfWeek: format(parsedDate, 'EEEE'),
+      isWeekend: isWeekend(parsedDate),
+      isBusinessDay: !isWeekend(parsedDate), // Basic check, real implementation would check holidays too
+    };
+
+    // Execute the requested operation
+    switch (operation) {
+      case 'get-date-info':
+        const currentDate = new Date();
+        const currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+        const currentYear = new Date(currentDate.getFullYear(), 11, 31);
+        
+        return {
+          ...baseResponse,
+          result: format(parsedDate, 'MMMM d, yyyy (EEEE)'),
+          daysRemaining: {
+            inMonth: differenceInCalendarDays(currentMonth, parsedDate),
+            inYear: differenceInCalendarDays(currentYear, parsedDate),
+          },
+        };
+        
+      case 'calculate-days-between':
+        if (!parsedEndDate) {
+          throw new Error('End date is required for days between calculation');
+        }
+        
+        const daysBetween = differenceInDays(parsedEndDate, parsedDate);
+        
+        return {
+          ...baseResponse,
+          result: daysBetween,
+          formattedDate: `${format(parsedDate, 'MMMM d, yyyy')} to ${format(parsedEndDate, 'MMMM d, yyyy')}`,
+        };
+        
+      case 'add-days':
+        const newDate = addDays(parsedDate, days);
+        
+        return {
+          ...baseResponse,
+          result: format(newDate, 'yyyy-MM-dd'),
+          formattedDate: format(newDate, 'MMMM d, yyyy'),
+          dayOfWeek: format(newDate, 'EEEE'),
+          isWeekend: isWeekend(newDate),
+          isBusinessDay: !isWeekend(newDate),
+        };
+        
+      case 'is-weekend':
+        return {
+          ...baseResponse,
+          result: isWeekend(parsedDate),
+        };
+        
+      case 'is-business-day':
+        // This implementation only checks weekends
+        // In a production system, you would also check holidays
+        const businessDay = !isWeekend(parsedDate);
+        
+        return {
+          ...baseResponse,
+          result: businessDay,
+          isBusinessDay: businessDay,
+        };
+        
+      case 'get-next-business-day':
+        let nextBusinessDay = parsedDate;
+        
+        // Keep adding days until we find a business day
+        do {
+          nextBusinessDay = addDays(nextBusinessDay, 1);
+        } while (isWeekend(nextBusinessDay));
+        
+        return {
+          result: format(nextBusinessDay, 'yyyy-MM-dd'),
+          formattedDate: format(nextBusinessDay, 'MMMM d, yyyy'),
+          dayOfWeek: format(nextBusinessDay, 'EEEE'),
+          isWeekend: false,
+          isBusinessDay: true,
+        };
+        
+      case 'get-holidays':
+        // Use the year from the date if not explicitly provided
+        const holidayYear = year || parsedDate.getFullYear();
+        
+        try {
+          // Fetch holidays from public API
+          const holidaysUrl = `https://date.nager.at/api/v3/PublicHolidays/${holidayYear}/${country}`;
+          const response = await fetch(holidaysUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch holidays: ${response.status} ${response.statusText}`);
+          }
+          
+          const holidays = await response.json() as HolidayApiResponse[];
+          
+          // Format the holidays
+          const formattedHolidays = holidays.map(holiday => ({
+            date: holiday.date,
+            name: holiday.name,
+            localName: holiday.localName,
+            countryCode: holiday.countryCode,
+          }));
+          
+          return {
+            result: formattedHolidays,
+            holidays: formattedHolidays,
+          };
+        } catch (error) {
+          // If the API fails, return a simpler set of major US holidays
+          // This is just a fallback for the demo
+          if (country.toUpperCase() === 'US') {
+            const majorHolidays = getMajorUSHolidays(holidayYear);
+            return {
+              result: majorHolidays,
+              holidays: majorHolidays,
+            };
+          } else {
+            throw new Error(`Failed to get holidays for ${country}: ${error.message}`);
+          }
+        }
+        
+      default:
+        throw new Error(`Unknown calendar operation: ${operation}`);
+    }
+  } catch (error) {
+    throw new Error(`Calendar tool error: ${error.message}`);
+  }
+};
+
+// Helper function to get major US holidays when the API is unavailable
+function getMajorUSHolidays(year: number) {
+  return [
+    { date: `${year}-01-01`, name: 'New Year\'s Day', localName: 'New Year\'s Day', countryCode: 'US' },
+    { date: `${year}-01-15`, name: 'Martin Luther King Jr. Day', localName: 'Martin Luther King Jr. Day', countryCode: 'US' },
+    { date: `${year}-02-19`, name: 'Presidents\' Day', localName: 'Washington\'s Birthday', countryCode: 'US' },
+    { date: `${year}-05-27`, name: 'Memorial Day', localName: 'Memorial Day', countryCode: 'US' },
+    { date: `${year}-06-19`, name: 'Juneteenth', localName: 'Juneteenth', countryCode: 'US' },
+    { date: `${year}-07-04`, name: 'Independence Day', localName: 'Independence Day', countryCode: 'US' },
+    { date: `${year}-09-02`, name: 'Labor Day', localName: 'Labor Day', countryCode: 'US' },
+    { date: `${year}-10-14`, name: 'Columbus Day', localName: 'Columbus Day', countryCode: 'US' },
+    { date: `${year}-11-11`, name: 'Veterans Day', localName: 'Veterans Day', countryCode: 'US' },
+    { date: `${year}-11-28`, name: 'Thanksgiving Day', localName: 'Thanksgiving Day', countryCode: 'US' },
+    { date: `${year}-12-25`, name: 'Christmas Day', localName: 'Christmas Day', countryCode: 'US' },
+  ];
+}
 
 // Helper functions to extract structured information from the model response
 function extractObjects(text: string): string[] {
