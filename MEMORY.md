@@ -395,8 +395,73 @@ export async function handleCustomerQuery(userId, conversationId, message) {
 }
 ```
 
+## Implementation Example: Weather Agent
+
+Here's the actual implementation of memory for a Weather Agent in our application:
+
+```typescript
+import { groq } from '@ai-sdk/groq';
+import { Agent } from '@mastra/core/agent';
+import { Memory } from '@mastra/memory';
+import { weatherTool } from '../tools';
+
+// Create a memory instance for the Weather Agent with optimized settings
+const weatherMemory = new Memory({
+  options: {
+    lastMessages: 20, // Keep more messages for better context
+    semanticRecall: {
+      topK: 3,        // Include top 3 most relevant past messages
+      messageRange: 2  // Include 2 messages before/after for context
+    },
+  },
+});
+
+export const weatherAgent = new Agent({
+  name: 'Weather Agent',
+  memory: weatherMemory,   // Attach the memory instance to the agent
+  instructions: `
+      You are a friendly and personable weather assistant with a great memory and a light sense of humor.
+      
+      // Instructions for maintaining context and conversational style...
+  `,
+  model: groq('llama-3.3-70b-specdec'),
+  tools: { weatherTool },
+});
+```
+
+### Configuration Decisions Explained
+
+For the Weather Agent, we made the following memory configuration choices:
+
+1. **Increased `lastMessages` to 20**: Weather queries often require more context than the default 10 messages, especially when users ask about multiple locations or compare conditions.
+
+2. **Set `topK` to 3**: This retrieves the three most semantically similar past messages. For weather queries, this is particularly useful when users revisit locations they've asked about before, even if not in recent messages.
+
+3. **Set `messageRange` to 2**: This includes two messages before and after each semantically similar message. For weather conversations, this surrounding context often contains important information about the user's specific interests (e.g., temperature, precipitation).
+
+With this configuration, the Weather Agent can:
+- Remember the most recently discussed locations
+- Reference previous weather queries for comparison
+- Retrieve context from earlier in the conversation when relevant
+- Maintain a natural conversational flow with context awareness
+
+When using the Weather Agent, you should include thread and resource IDs in your API calls:
+
+```typescript
+// Example API call with memory context
+const response = await weatherAgent.stream(
+  "What will the weather be like tomorrow?",
+  {
+    threadId: "weather_conversation_123",
+    resourceId: "user_456",
+  }
+);
+```
+
+This implementation uses LibSQL as the default storage backend and fastembed-js for embeddings, which are automatically set up when you create a new Memory instance without specifying custom storage or embedding options.
+
 ## Conclusion
 
 Memory is what makes your Mastra agents truly powerful, enabling them to maintain context, remember previous interactions, and provide personalized experiences. By understanding and properly configuring memory, you can create agents that feel more natural and helpful to users.
 
-Remember that the default settings are a good starting point, but don't be afraid to customize memory based on your specific use case.
+Remember that the default settings are a good starting point, but as shown with our Weather Agent example, you should customize memory based on your specific use case.
