@@ -237,6 +237,9 @@ export const imageAnalysisTool = createTool({
   },
 });
 
+// Import the location analysis tool
+export { locationAnalysisTool } from './imageAnalysis';
+
 const analyzeImage = async (imageUrl: string, prompt?: string) => {
   try {
     // Get API key from environment variables

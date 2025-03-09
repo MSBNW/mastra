@@ -2,6 +2,7 @@ import { groq } from '@ai-sdk/groq';
 import { Agent } from '@mastra/core/agent';
 import { Step, Workflow } from '@mastra/core/workflows';
 import { z } from 'zod';
+import { imageToWeatherWorkflow } from './imageToWeather';
 
 const llm = groq('llama-3.3-70b-specdec');
 
@@ -130,6 +131,9 @@ const planActivities = new Step({
       ${JSON.stringify(forecast, null, 2)}
       `;
 
+    // Collect the full response text
+    let fullResponseText = '';
+    
     const response = await agent.stream([
       {
         role: 'user',
@@ -138,11 +142,13 @@ const planActivities = new Step({
     ]);
 
     for await (const chunk of response.textStream) {
+      // Write to stdout and collect the text
       process.stdout.write(chunk);
+      fullResponseText += chunk;
     }
 
     return {
-      activities: response.text,
+      activities: fullResponseText,
     };
   },
 });
@@ -180,4 +186,5 @@ const weatherWorkflow = new Workflow({
 
 weatherWorkflow.commit();
 
-export { weatherWorkflow };
+// Import the image to weather workflow
+export { weatherWorkflow, imageToWeatherWorkflow };
