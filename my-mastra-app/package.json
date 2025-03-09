@@ -13,6 +13,7 @@
   "type": "module",
   "dependencies": {
     "@ai-sdk/groq": "^1.1.12",
+    "@google/generative-ai": "^0.24.0",
     "@mastra/core": "^0.4.4",
     "mastra": "^0.2.8",
     "zod": "^3.24.2"
